@@ -1,15 +1,19 @@
 use handler::{Handler, ErrorHandler};
 use http::{Method, ContentType};
 
-pub struct StaticRouteInfo {
-    pub method: Method,
-    pub path: &'static str,
-    pub format: Option<ContentType>,
-    pub handler: Handler,
-    pub rank: Option<isize>,
+pub trait StaticRouteInfo {
+    fn method(&self) -> Method;
+    fn path(&self) -> &'static str;
+    fn format(&self) -> Option<ContentType> {
+        None
+    }
+    fn handler(&self) -> Handler;
+    fn rank(&self) -> Option<isize> {
+        None
+    }
 }
 
-pub struct StaticCatchInfo {
-    pub code: u16,
-    pub handler: ErrorHandler,
+pub trait StaticCatchInfo {
+    fn code(&self) -> u16;
+    fn handler(&self) -> ErrorHandler;
 }

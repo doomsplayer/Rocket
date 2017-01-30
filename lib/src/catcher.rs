@@ -114,9 +114,11 @@ impl Catcher {
 }
 
 #[doc(hidden)]
-impl<'a> From<&'a StaticCatchInfo> for Catcher {
-    fn from(info: &'a StaticCatchInfo) -> Catcher {
-        Catcher::new(info.code, info.handler)
+impl<'a, C> From<&'a C> for Catcher
+    where C: StaticCatchInfo
+{
+    fn from(info: &'a C) -> Catcher {
+        Catcher::new(info.code(), info.handler())
     }
 }
 

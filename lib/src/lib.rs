@@ -142,3 +142,19 @@ pub fn ignite() -> Rocket {
 pub fn custom(config: config::Config, log: bool) -> Rocket {
     Rocket::custom(config, log)
 }
+
+
+#[macro_export]
+macro_rules! routes {
+    ($($r:expr),*) => (
+        vec![$(::rocket::Route::from(&$r)),*]
+    )
+}
+
+#[macro_export]
+macro_rules! errors {
+    ($($c:expr),*) => (
+        vec![$(::rocket::Catcher::from(&$c)),*]
+    )
+}
+

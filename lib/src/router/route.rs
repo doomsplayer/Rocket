@@ -130,11 +130,11 @@ impl fmt::Debug for Route {
 }
 
 #[doc(hidden)]
-impl<'a> From<&'a StaticRouteInfo> for Route {
-    fn from(info: &'a StaticRouteInfo) -> Route {
-        let mut route = Route::new(info.method, info.path, info.handler);
-        route.format = info.format.clone().unwrap_or(ContentType::Any);
-        if let Some(rank) = info.rank {
+impl<'a,T:StaticRouteInfo> From<&'a T> for Route {
+    fn from(info: &'a T) -> Route {
+        let mut route = Route::new(info.method(), info.path(), info.handler());
+        route.format = info.format().unwrap_or(ContentType::Any);
+        if let Some(rank) = info.rank() {
             route.rank = rank;
         }
 
