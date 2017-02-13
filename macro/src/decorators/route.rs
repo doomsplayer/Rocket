@@ -4,7 +4,7 @@ use proc_macro::TokenStream;
 
 
 use rocket::http::Method;
-use syn::{FunctionRetTy, Ident, Ty};
+use syn::{FunctionRetTy, Ident, Item, Ty};
 use syn::{parse_expr, parse_item};
 use quote::Tokens;
 
@@ -51,43 +51,25 @@ method_decorator!(patch_decorator, Patch);
 // FIXME: Compilation fails when parameters have the same name as the function!
 fn generic_route_decorator(router_def: RouterDef) -> Result<TokenStream> {
     let mut func = router_def.item.clone();
+
     let fn_vis = func.vis.clone();
     let fn_name = router_def.fn_name();
     let user_fn_ident = Ident::new(USER_FN_PREFIX.to_string() + &fn_name);
     func.ident = user_fn_ident.clone();
     let fn_ident = Ident::new(fn_name);
-    let mut impl_generics = func.fn_generics()?.clone();
-    let fn_decl = func.fn_decl()?;
-    let fn_ret_ty = match &fn_decl.output {
-        &FunctionRetTy::Ty(ref ty) => ty.clone(),
-        _ => Ty::Tup(vec![]),
-    };
 
-    let (input_names, input_tys, input_idx) = fn_decl.arg_triple()?;
+    let (input_names, input_tys, input_idx) = func.fn_decl()?.arg_triple()?;
 
     let mut param_stack = HashMap::from_iter(input_names.iter()
         .cloned()
         .zip(input_tys.iter().cloned()));
-
     let data_statement = generate_data_statement(&mut param_stack, &router_def)?;
     let query_statement = generate_query_statement(&mut param_stack, &router_def)?;
     let param_statements = generate_param_statements(&mut param_stack, &router_def)?;
 
     assert_eq!(param_stack.len(), 0);
 
-    let user_defined_lifetimes = impl_generics.lifetimes
-        .iter()
-        .map(|l| l.lifetime.ident.to_string())
-        .collect();
-    let mut lifetime_pool = LifetimePool::new(&user_defined_lifetimes);
-
-    let impl_tys: Vec<_> = input_tys.iter()
-        .map(|ty| ty.coalesce_lifetime_recursive(&mut lifetime_pool))
-        .collect();
-    impl_generics.lifetimes.extend(lifetime_pool.used_lifetime_def());
-
     let input_tys = input_tys.as_slice();
-    let impl_tys = impl_tys.as_slice();
     let input_idx = input_idx.as_slice();
     let input_name_idents: Vec<_> =
         input_names.into_iter().map(|name| Ident::new(name)).collect();
@@ -102,6 +84,9 @@ fn generic_route_decorator(router_def: RouterDef) -> Result<TokenStream> {
         .unwrap_or(quote! { None });
     let optional_rank =
         router_def.rank.map(|r| quote! { Some(#r) }).unwrap_or(quote! { None });
+
+    let impl_fn_traits =
+        impl_fn_traits(&func, input_idx, input_tys, &fn_ident, &user_fn_ident)?;
 
     let tokens = quote! {
         
@@ -136,24 +121,7 @@ fn generic_route_decorator(router_def: RouterDef) -> Result<TokenStream> {
             }
         }
 
-        impl #impl_generics ::std::ops::FnOnce<(#(#impl_tys),*)> for #fn_ident {
-            type Output = #fn_ret_ty;
-            extern "rust-call" fn call_once(self, args: (#(#input_tys),*)) -> Self::Output {
-                #user_fn_ident(#(args.#input_idx),*)
-            }
-        }
-
-        impl #impl_generics ::std::ops::FnMut<(#(#impl_tys),*)> for #fn_ident {
-            extern "rust-call" fn call_mut(&mut self, args: (#(#input_tys),*)) -> Self::Output {
-                #user_fn_ident(#(args.#input_idx),*)
-            }
-        }
-
-        impl #impl_generics ::std::ops::Fn<(#(#impl_tys),*)> for #fn_ident {
-            extern "rust-call" fn call(&self, args: (#(#input_tys),*)) -> Self::Output {
-                #user_fn_ident(#(args.#input_idx),*)
-            }
-        }
+        #impl_fn_traits
     };
     tokens.parse().map_err(|e| LexError(e).into())
 }
@@ -283,5 +251,57 @@ fn generate_param_statements(param_stack: &mut HashMap<String, Ty>,
 
     Ok(quote! {
         #(#fn_param_statements);*
+    })
+}
+
+
+
+fn impl_fn_traits(func: &Item,
+                  input_idx: &[Ident],
+                  input_tys: &[Ty],
+                  fn_ident: &Ident,
+                  user_fn_ident: &Ident)
+                  -> Result<Tokens> {
+    let fn_decl = func.fn_decl()?;
+    let mut impl_generics = func.fn_generics()?.clone();
+    let user_defined_lifetimes = impl_generics.lifetimes
+        .iter()
+        .map(|l| l.lifetime.ident.to_string())
+        .collect();
+    let mut lifetime_pool = LifetimePool::new(&user_defined_lifetimes);
+
+    let impl_tys: Vec<_> = input_tys.iter()
+        .map(|ty| ty.coalesce_lifetime_recursive(&mut lifetime_pool))
+        .collect();
+
+
+    impl_generics.lifetimes.extend(lifetime_pool.used_lifetime_def());
+
+    let fn_ret_ty = match &fn_decl.output {
+        &FunctionRetTy::Ty(ref ty) => ty.clone(),
+        _ => Ty::Tup(vec![]),
+    };
+
+    let impl_tys = impl_tys.as_slice();
+
+    Ok(quote! {
+        impl #impl_generics ::std::ops::FnOnce<(#(#impl_tys,)*)> for #fn_ident {
+            type Output = #fn_ret_ty;
+            extern "rust-call" fn call_once(self, args: (#(#input_tys,)*)) -> Self::Output {
+                #user_fn_ident(#(args.#input_idx),*)
+            }
+        }
+
+        impl #impl_generics ::std::ops::FnMut<(#(#impl_tys,)*)> for #fn_ident {
+            extern "rust-call" fn call_mut(&mut self, args: (#(#input_tys,)*)) -> Self::Output {
+                #user_fn_ident(#(args.#input_idx),*)
+            }
+        }
+
+        impl #impl_generics ::std::ops::Fn<(#(#impl_tys,)*)> for #fn_ident {
+            extern "rust-call" fn call(&self, args: (#(#input_tys,)*)) -> Self::Output {
+                #user_fn_ident(#(args.#input_idx),*)
+            }
+        }
     })
 }

@@ -1,4 +1,4 @@
-#![feature(proc_macro)]
+#![feature(proc_macro,unboxed_closures,fn_traits)]
 extern crate rocket;
 #[macro_use]
 extern crate rocket_macro;

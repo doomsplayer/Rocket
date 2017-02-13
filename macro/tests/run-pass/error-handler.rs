@@ -1,4 +1,4 @@
-#![feature(proc_macro)]
+#![feature(proc_macro,unboxed_closures,fn_traits)]
 extern crate rocket;
 extern crate rocket_macro;
 
@@ -16,17 +16,17 @@ pub fn err1a(_err: Error) -> &'static str {
 }
 
 #[error(404)]
-pub fn err1b(_req: &Request) -> &'static str {
+pub fn err1b<'a>(_req: &Request<'a>) -> &'static str {
     "hi"
 }
 
 #[error(404)]
-pub fn err2a(_err: Error, _req: &Request) -> &'static str {
+pub fn err2a<'a>(_err: Error, _req: &Request<'a>) -> &'static str {
     "hi"
 }
 
 #[error(404)]
-pub fn err2b<'a>(_err: Error, _req: &'a Request) -> &'a str {
+pub fn err2b<'a>(_err: Error, _req: &'a Request<'a>) -> &'a str {
     "hi"
 }
 

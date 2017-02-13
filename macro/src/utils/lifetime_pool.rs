@@ -41,7 +41,7 @@ impl<'a> LifetimePool<'a> {
         Lifetime::new(Ident::new(self.pop()))
     }
 
-    pub fn used_lifetime_def(&self) -> Vec<LifetimeDef> {
-        self.used.iter().cloned().map(LifetimeDef::new).collect()
+    pub fn used_lifetime_def(&mut self) -> Vec<LifetimeDef> {
+        self.used.drain(..).map(LifetimeDef::new).collect()
     }
 }

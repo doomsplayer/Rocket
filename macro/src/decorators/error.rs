@@ -1,6 +1,7 @@
 use proc_macro::TokenStream;
-use syn::{ExprKind, FnArg, FunctionRetTy, Ident, Ty};
+use syn::{ExprKind, FnArg, FunctionRetTy, Ident, Item, Ty};
 use syn::{parse_expr, parse_item};
+use quote::Tokens;
 
 use ::USER_FN_PREFIX;
 use errors::*;
@@ -11,6 +12,9 @@ const ERR_PARAM: &'static str = "_error";
 const REQ_PARAM: &'static str = "_request";
 
 pub fn error_decorator(args: TokenStream, item: TokenStream) -> Result<TokenStream> {
+    let err_param_ident = Ident::new(ERR_PARAM);
+    let req_param_ident = Ident::new(REQ_PARAM);
+
     let expr = parse_expr(&args.to_string()).map_err(|_| ErrorParamNumNotCorrect)?;
     let code = match expr.node {
         ExprKind::Paren(expr) => {
@@ -29,20 +33,11 @@ pub fn error_decorator(args: TokenStream, item: TokenStream) -> Result<TokenStre
     func.ident = user_fn_ident.clone();
     let fn_ident = Ident::new(fn_name);
     let fn_vis = func.vis.clone();
-    let fn_generics = func.fn_generics()?;
-
 
     let fn_decl = func.fn_decl()?;
     if fn_decl.inputs.len() > 2 {
         bail!(ErrorHandleTooMuchParam);
     }
-    let fn_ret_ty = match &fn_decl.output {
-        &FunctionRetTy::Ty(ref ty) => ty.clone(),
-        _ => Ty::Tup(vec![]),
-    };
-
-    let err_param_ident = Ident::new(ERR_PARAM);
-    let req_param_ident = Ident::new(REQ_PARAM);
 
     let mut input_name_idents = vec![];
     let mut input_tys = vec![];
@@ -71,9 +66,11 @@ pub fn error_decorator(args: TokenStream, item: TokenStream) -> Result<TokenStre
         input_tys.push(ty);
         input_idx.push(Ident::new(idx));
     }
-
     let input_tys = input_tys.as_slice();
     let input_idx = input_idx.as_slice();
+
+    let impl_fn_traits =
+        impl_fn_traits(&func, input_idx, input_tys, &fn_ident, &user_fn_ident)?;
 
     let out = quote! {
 
@@ -98,24 +95,56 @@ pub fn error_decorator(args: TokenStream, item: TokenStream) -> Result<TokenStre
 
         }
 
-        impl #fn_generics ::std::ops::FnOnce<(#(#input_tys),*)> for #fn_ident {
-            type Output = #fn_ret_ty;
-            extern "rust-call" fn call_once(self, args: (#(#input_tys),*)) -> Self::Output {
-                #user_fn_ident(#(args.#input_idx),*)
-            }
-        }
-
-        impl #fn_generics ::std::ops::FnMut<(#(#input_tys),*)> for #fn_ident {
-            extern "rust-call" fn call_mut(&mut self, args: (#(#input_tys),*)) -> Self::Output {
-                #user_fn_ident(#(args.#input_idx),*)
-            }
-        }
-
-        impl #fn_generics ::std::ops::Fn<(#(#input_tys),*)> for #fn_ident {
-            extern "rust-call" fn call(&self, args: (#(#input_tys),*)) -> Self::Output {
-                #user_fn_ident(#(args.#input_idx),*)
-            }
-        }
+        #impl_fn_traits
     };
     Ok(out.parse().unwrap())
+}
+
+fn impl_fn_traits(func: &Item,
+                  input_idx: &[Ident],
+                  input_tys: &[Ty],
+                  fn_ident: &Ident,
+                  user_fn_ident: &Ident)
+                  -> Result<Tokens> {
+    let fn_decl = func.fn_decl()?;
+    let mut impl_generics = func.fn_generics()?.clone();
+    let user_defined_lifetimes = impl_generics.lifetimes
+        .iter()
+        .map(|l| l.lifetime.ident.to_string())
+        .collect();
+    let mut lifetime_pool = LifetimePool::new(&user_defined_lifetimes);
+
+    let impl_tys: Vec<_> = input_tys.iter()
+        .map(|ty| ty.coalesce_lifetime_recursive(&mut lifetime_pool))
+        .collect();
+
+    impl_generics.lifetimes.extend(lifetime_pool.used_lifetime_def());
+
+    let fn_ret_ty = match &fn_decl.output {
+        &FunctionRetTy::Ty(ref ty) => ty.clone(),
+        _ => Ty::Tup(vec![]),
+    };
+
+    let impl_tys = impl_tys.as_slice();
+
+    Ok(quote! {
+        impl #impl_generics ::std::ops::FnOnce<(#(#impl_tys,)*)> for #fn_ident {
+            type Output = #fn_ret_ty;
+            extern "rust-call" fn call_once(self, args: (#(#input_tys,)*)) -> Self::Output {
+                #user_fn_ident(#(args.#input_idx),*)
+            }
+        }
+
+        impl #impl_generics ::std::ops::FnMut<(#(#impl_tys,)*)> for #fn_ident {
+            extern "rust-call" fn call_mut(&mut self, args: (#(#input_tys,)*)) -> Self::Output {
+                #user_fn_ident(#(args.#input_idx),*)
+            }
+        }
+
+        impl #impl_generics ::std::ops::Fn<(#(#impl_tys,)*)> for #fn_ident {
+            extern "rust-call" fn call(&self, args: (#(#input_tys,)*)) -> Self::Output {
+                #user_fn_ident(#(args.#input_idx),*)
+            }
+        }
+    })
 }
